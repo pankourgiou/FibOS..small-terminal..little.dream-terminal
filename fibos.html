@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fibOS — a terminal grown from 0 and 1</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0f0c;
+    --bg-panel:#0e1410;
+    --bg-raised:#131b15;
+    --ink:#e9e4d6;
+    --ink-dim:#8b9389;
+    --accent:#e3b341;
+    --accent-soft:#f3d98b;
+    --accent-2:#c1623d;
+    --good:#7da77f;
+    --line:rgba(233,228,214,0.10);
+    --sp1:8px; --sp2:13px; --sp3:21px; --sp4:34px; --sp5:55px;
+  }
+  html[data-theme="moss"]{ --accent:#7da77f; --accent-2:#e3b341; --good:#9bc49d; }
+  html[data-theme="rust"]{ --bg:#120c0a; --bg-panel:#180f0b; --bg-raised:#1f140f; --accent:#c1623d; --accent-2:#e3b341; }
+  html[data-theme="dusk"]{ --bg:#0a0c14; --bg-panel:#0f121d; --bg-raised:#161a28; --accent:#8e9fd6; --accent-2:#d18ea0; --good:#7fb0a0; }
+  html[data-theme="dawn"]{ --bg:#f4efe3; --bg-panel:#ece3cf; --bg-raised:#e3d8bd; --ink:#241f17; --ink-dim:#6b6354; --accent:#b5772f; --accent-2:#7d8f53; --good:#5f7a4f; --line:rgba(36,31,23,0.14); }
+
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; margin:0; overflow:hidden; background:var(--bg); }
+  body{
+    color:var(--ink);
+    font-family:'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+    -webkit-font-smoothing:antialiased;
+  }
+  .hidden{ display:none !important; }
+
+  /* ---------- boot screen ---------- */
+  #boot-screen{
+    position:fixed; inset:0; z-index:50;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:var(--sp3); background:var(--bg); cursor:default;
+  }
+  .boot-mark{ display:flex; flex-direction:column; align-items:center; gap:var(--sp1); }
+  .boot-title{
+    font-family:'Fraunces', serif; font-weight:600; font-size:44px; letter-spacing:0.01em;
+    margin:0; color:var(--ink);
+  }
+  .boot-sub{ margin:0; font-size:12px; color:var(--ink-dim); letter-spacing:0.04em; }
+  .boot-log{
+    width:min(460px, 86vw); height:130px; overflow:hidden;
+    font-size:12px; line-height:1.6; color:var(--ink-dim);
+  }
+  .boot-log div{ opacity:0.85; }
+  .boot-bar{ width:min(460px, 86vw); height:3px; background:var(--line); border-radius:2px; overflow:hidden; }
+  .boot-bar-fill{ height:100%; width:0%; background:var(--accent); transition:width .2s ease; }
+  .boot-skip{ font-size:10px; color:var(--ink-dim); opacity:0.55; letter-spacing:0.05em; }
+
+  /* ---------- main os ---------- */
+  #os{ height:100%; display:grid; grid-template-rows:auto 1fr auto; position:relative; }
+
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:var(--sp2) var(--sp3); border-bottom:1px solid var(--line); background:var(--bg-panel);
+  }
+  .topbar-left{ display:flex; align-items:center; gap:var(--sp3); }
+  .dots{ display:flex; gap:6px; }
+  .dots span{ width:9px; height:9px; border-radius:50%; display:inline-block; opacity:0.8; }
+  .dots span:nth-child(1){ background:var(--accent-2); }
+  .dots span:nth-child(2){ background:var(--accent); }
+  .dots span:nth-child(3){ background:var(--good); }
+  .os-title{ font-family:'Fraunces', serif; font-size:15px; font-weight:600; letter-spacing:0.01em; }
+  .os-title .version{ color:var(--ink-dim); font-family:'JetBrains Mono', monospace; font-weight:400; font-size:11px; margin-left:6px; }
+  .topbar-right{ display:flex; align-items:center; gap:var(--sp3); font-size:11px; color:var(--ink-dim); }
+  #phi-ticker{ animation:pulse 4s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{ opacity:0.55; } 50%{ opacity:1; } }
+
+  .workspace{
+    display:grid; grid-template-columns:61.8% 38.2%; gap:var(--sp3);
+    padding:var(--sp3); overflow:hidden; min-height:0;
+  }
+  .panel{
+    background:var(--bg-panel); border:1px solid var(--line); border-radius:10px;
+    display:flex; flex-direction:column; min-height:0; overflow:hidden;
+  }
+  .terminal-pane{ padding:var(--sp3); }
+  .output{
+    flex:1; overflow-y:auto; padding-right:var(--sp1); font-size:13.5px; line-height:1.55; min-height:0;
+  }
+  .output::-webkit-scrollbar{ width:6px; }
+  .output::-webkit-scrollbar-thumb{ background:var(--line); border-radius:3px; }
+  .line{ margin:0 0 4px; white-space:pre-wrap; word-break:break-word; }
+  .line-cmd{ color:var(--ink-dim); }
+  .line-cmd .prompt-echo{ color:var(--accent); margin-right:8px; }
+  .line-err{ color:var(--accent-2); }
+  .line-ok{ color:var(--good); }
+  .line-dim{ color:var(--ink-dim); }
+  .line-accent{ color:var(--accent); }
+  pre.block{ margin:2px 0 12px; white-space:pre; font-family:inherit; color:inherit; font-size:13px; overflow-x:auto; }
+
+  .input-row{
+    display:flex; align-items:center; gap:var(--sp1);
+    margin-top:var(--sp2); padding-top:var(--sp2); border-top:1px solid var(--line);
+  }
+  .prompt{ color:var(--accent); white-space:nowrap; font-weight:500; font-size:13.5px; }
+  #cmd-input{
+    flex:1; background:transparent; border:none; outline:none; color:var(--ink);
+    font-family:inherit; font-size:13.5px; caret-color:var(--accent);
+  }
+  #cmd-input:focus-visible{ outline:1px solid var(--accent); outline-offset:2px; border-radius:2px; }
+
+  .spiral-pane{ padding:var(--sp3); gap:var(--sp2); }
+  .spiral-header{
+    font-family:'Fraunces', serif; letter-spacing:0.1em; font-size:11px; color:var(--ink-dim);
+    text-transform:uppercase;
+  }
+  #spiral-svg{ flex:1; width:100%; min-height:0; }
+  .readouts{ display:flex; flex-direction:column; gap:4px; }
+  .seq-readout, .ratio-readout{ font-size:11px; color:var(--ink-dim); word-break:break-all; }
+  .ratio-readout{ color:var(--accent); }
+
+  .statusbar{
+    display:flex; justify-content:space-between; padding:var(--sp1) var(--sp3);
+    border-top:1px solid var(--line); font-size:10.5px; color:var(--ink-dim); background:var(--bg-panel);
+  }
+
+  /* ---------- overlays ---------- */
+  .halt-overlay{
+    position:fixed; inset:0; z-index:30; background:rgba(0,0,0,0.72);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
+    cursor:pointer; color:var(--ink); text-align:center;
+  }
+  .halt-overlay p{ margin:0; font-family:'Fraunces', serif; font-size:22px; }
+  .halt-overlay .halt-sub{ font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--ink-dim); }
+
+  .rain-overlay{ position:fixed; inset:0; pointer-events:none; overflow:hidden; z-index:40; }
+  .rain-overlay span{
+    position:absolute; top:-10vh; color:var(--accent); font-family:'JetBrains Mono', monospace;
+    animation-name:fall; animation-timing-function:linear; animation-fill-mode:forwards;
+  }
+  @keyframes fall{ from{ transform:translateY(-10vh); } to{ transform:translateY(115vh); } }
+
+  @media (max-width:880px){
+    .workspace{ grid-template-columns:1fr; grid-template-rows:1.4fr 1fr; }
+    .boot-title{ font-size:34px; }
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration:0.001ms !important; transition-duration:0.001ms !important; }
+  }
+</style>
+</head>
+<body>
+
+  <div id="boot-screen">
+    <div class="boot-mark">
+      <svg id="boot-spiral" viewBox="0 0 200 200" width="110" height="110"></svg>
+      <h1 class="boot-title">fibOS</h1>
+      <p class="boot-sub">grown from two seeds: 0 and 1</p>
+    </div>
+    <div class="boot-log" id="boot-log"></div>
+    <div class="boot-bar"><div class="boot-bar-fill" id="boot-bar-fill"></div></div>
+    <div class="boot-skip">press any key, or click, to skip</div>
+  </div>
+
+  <div id="os" class="hidden">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="dots"><span></span><span></span><span></span></div>
+        <div class="os-title">fibOS<span class="version">v1.61803</span></div>
+      </div>
+      <div class="topbar-right">
+        <span id="phi-ticker">φ 1.6180339887…</span>
+        <span id="clock">00:00:00</span>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="panel terminal-pane" id="terminal-pane">
+        <div class="output" id="output"></div>
+        <div class="input-row">
+          <span class="prompt">fib@os ~ %</span>
+          <input id="cmd-input" autocomplete="off" autocapitalize="off" spellcheck="false" />
+        </div>
+      </section>
+
+      <aside class="panel spiral-pane">
+        <div class="spiral-header">Sequence monitor</div>
+        <svg id="spiral-svg" viewBox="0 0 400 400"></svg>
+        <div class="readouts">
+          <div class="seq-readout" id="seq-readout">F(0..9): 0, 1, 1, 2, 3, 5, 8, 13, 21, 34</div>
+          <div class="ratio-readout" id="ratio-readout">F(9)/F(8) = 1.6190476190   φ = 1.6180339887</div>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="statusbar">
+      <span id="footer-hint">type 'help' for commands</span>
+      <span id="theme-indicator">theme: amber</span>
+    </footer>
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const PHI = (1 + Math.sqrt(5)) / 2;
+
+  /* ============ fibonacci core ============ */
+  function fibSeq(n){
+    n = Math.max(0, Math.min(Math.trunc(n) || 0, 500));
+    if(n === 0) return [];
+    const seq = [0n, 1n];
+    while(seq.length < n) seq.push(seq[seq.length-1] + seq[seq.length-2]);
+    return seq.slice(0, n);
+  }
+  function reverseFibSeq(n){ return fibSeq(n).slice().reverse(); }
+
+  function bigIntSqrtFloor(big){
+    if(big < 0n) throw new Error('negative');
+    if(big < 2n) return big;
+    let x = big, y = (x + 1n) / 2n;
+    while(y < x){ x = y; y = (x + big/x) / 2n; }
+    return x;
+  }
+  function isPerfectSquare(big){
+    if(big < 0n) return false;
+    const r = bigIntSqrtFloor(big);
+    return r * r === big;
+  }
+  function isFibonacci(numBig){
+    const a = 5n*numBig*numBig + 4n;
+    const b = 5n*numBig*numBig - 4n;
+    return isPerfectSquare(a) || isPerfectSquare(b);
+  }
+  function fibIndex(numBig){
+    if(numBig < 0n) return -1;
+    let a = 0n, b = 1n, i = 0;
+    while(a < numBig){ const next = a + b; a = b; b = next; i++; }
+    return a === numBig ? i : -1;
+  }
+
+  /* ============ dom refs ============ */
+  const bootScreen = document.getElementById('boot-screen');
+  const bootLogEl = document.getElementById('boot-log');
+  const bootBarFill = document.getElementById('boot-bar-fill');
+  const bootSpiralEl = document.getElementById('boot-spiral');
+  const osRoot = document.getElementById('os');
+  const outputEl = document.getElementById('output');
+  const cmdInput = document.getElementById('cmd-input');
+  const spiralSvgEl = document.getElementById('spiral-svg');
+  const seqReadoutEl = document.getElementById('seq-readout');
+  const ratioReadoutEl = document.getElementById('ratio-readout');
+  const clockEl = document.getElementById('clock');
+  const themeIndicatorEl = document.getElementById('theme-indicator');
+  const terminalPaneEl = document.getElementById('terminal-pane');
+
+  /* ============ state ============ */
+  let history = [];
+  let historyPos = 0;
+  let maxComputed = 10;
+  let currentTheme = 'amber';
+  let bootTimeMs = Date.now();
+
+  const files = {
+    'readme.txt': "Welcome to fibOS. Type 'help' to begin.\nEverything here is built from one rule: each term is the sum of the two before it.",
+    'genesis.log': 'Two seeds: 0 and 1.\nEverything else in this OS is just addition, repeated.',
+    'phi.cfg': 'ratio = 1.6180339887498948482045868343656...\nconverges_from = F(n) / F(n-1) as n grows\nidentity = phi^2 = phi + 1',
+    'reverse.note': "Reverse Fibonacci: take the sequence and read it back to front.\nThis terminal uses it for shutdown and reboot countdowns —\nT-minus 13, 8, 5, 3, 2, 1, 1, 0.",
+    'spiral.cfg': 'rendered procedurally as a logarithmic spiral with growth rate ln(phi) per quarter turn.\nsee the sequence monitor panel.'
+  };
+
+  const facts = [
+    'The ratio of consecutive Fibonacci numbers approaches the golden ratio, about 1.6180339887.',
+    'Sunflower seed heads and pinecones often show spiral counts that are neighbouring Fibonacci numbers.',
+    "Fibonacci's real name was Leonardo of Pisa — 'Fibonacci' was a nickname given centuries later.",
+    'He introduced the sequence in 1202 using a thought experiment about how fast rabbits could breed.',
+    "Every positive integer can be written as a sum of non-consecutive Fibonacci numbers — that's Zeckendorf's theorem.",
+    'The number of ways to climb a staircase, taking one or two steps at a time, is a Fibonacci number.',
+    'Nautilus shells approximate a golden spiral, but not as exactly as people often assume.',
+    'The golden ratio satisfies a tidy equation: phi squared equals phi plus one.',
+    'Fibonacci numbers turn up in the branching patterns of trees and the arrangement of leaves around a stem.',
+    'Phi is sometimes called the "most irrational" number, since its continued fraction is all ones.'
+  ];
+
+  /* ============ output helpers ============ */
+  function scrollToBottom(){ outputEl.scrollTop = outputEl.scrollHeight; }
+  function printLine(text, cls){
+    const div = document.createElement('div');
+    div.className = 'line' + (cls ? ' ' + cls : '');
+    div.textContent = text;
+    outputEl.appendChild(div);
+    scrollToBottom();
+  }
+  function printPre(text, cls){
+    const pre = document.createElement('pre');
+    pre.className = 'block' + (cls ? ' ' + cls : '');
+    pre.textContent = text;
+    outputEl.appendChild(pre);
+    scrollToBottom();
+  }
+  function printCommandEcho(raw){
+    const div = document.createElement('div');
+    div.className = 'line line-cmd';
+    const span = document.createElement('span');
+    span.className = 'prompt-echo';
+    span.textContent = 'fib@os ~ %';
+    div.appendChild(span);
+    div.appendChild(document.createTextNode(' ' + raw));
+    outputEl.appendChild(div);
+    scrollToBottom();
+  }
+  function printBannerBlock(){
+    printPre('--------------------------------\n fibOS  ·  v1.61803\n grown from two seeds: 0 and 1\n--------------------------------');
+  }
+
+  /* ============ spiral rendering ============ */
+  function buildSpiralPath(n, W, H){
+    n = Math.max(2, Math.min(n, 20));
+    const cx = W/2, cy = H/2;
+    const b = Math.log(PHI) / (Math.PI/2);
+    const turns = Math.min(4, 0.8 + n*0.16);
+    const thetaMax = turns * 2 * Math.PI;
+    const rMax = Math.exp(b*thetaMax);
+    const scale = (Math.min(W,H)/2*0.82) / rMax;
+    const steps = 240;
+    let d = '';
+    for(let i=0;i<=steps;i++){
+      const theta = thetaMax * i/steps;
+      const r = scale * Math.exp(b*theta);
+      const x = cx + r*Math.cos(theta);
+      const y = cy + r*Math.sin(theta);
+      d += (i===0 ? 'M' : 'L') + x.toFixed(2) + ',' + y.toFixed(2) + ' ';
+    }
+    return { d, cx, cy, b, thetaMax, scale };
+  }
+
+  function renderSpiral(n){
+    n = Math.max(2, Math.min(Math.trunc(n) || 10, 20));
+    const ns = 'http://www.w3.org/2000/svg';
+    const W = 400, H = 400;
+    while(spiralSvgEl.firstChild) spiralSvgEl.removeChild(spiralSvgEl.firstChild);
+
+    const { d, cx, cy, b, thetaMax, scale } = buildSpiralPath(n, W, H);
+
+    const defs = document.createElementNS(ns, 'defs');
+    const filter = document.createElementNS(ns, 'filter');
+    filter.setAttribute('id', 'spiral-glow');
+    filter.setAttribute('x', '-50%'); filter.setAttribute('y', '-50%');
+    filter.setAttribute('width', '200%'); filter.setAttribute('height', '200%');
+    const blur = document.createElementNS(ns, 'feGaussianBlur');
+    blur.setAttribute('stdDeviation', '4');
+    filter.appendChild(blur);
+    defs.appendChild(filter);
+    spiralSvgEl.appendChild(defs);
+
+    const glowPath = document.createElementNS(ns, 'path');
+    glowPath.setAttribute('d', d);
+    glowPath.setAttribute('fill', 'none');
+    glowPath.setAttribute('stroke', 'var(--accent)');
+    glowPath.setAttribute('stroke-width', '3');
+    glowPath.setAttribute('opacity', '0.4');
+    glowPath.setAttribute('filter', 'url(#spiral-glow)');
+    spiralSvgEl.appendChild(glowPath);
+
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'var(--accent)');
+    path.setAttribute('stroke-width', '1.6');
+    path.setAttribute('stroke-linecap', 'round');
+    spiralSvgEl.appendChild(path);
+
+    requestAnimationFrame(function(){
+      try{
+        const len = path.getTotalLength();
+        [path, glowPath].forEach(function(p){
+          p.style.transition = 'none';
+          p.style.strokeDasharray = String(len);
+          p.style.strokeDashoffset = String(len);
+        });
+        void path.getBoundingClientRect();
+        const dur = reducedMotion ? 0.05 : 1.3;
+        [path, glowPath].forEach(function(p){ p.style.transition = 'stroke-dashoffset ' + dur + 's ease-out'; });
+        requestAnimationFrame(function(){
+          path.style.strokeDashoffset = '0';
+          glowPath.style.strokeDashoffset = '0';
+        });
+      }catch(e){ /* layout not ready yet, ignore */ }
+    });
+
+    const center = document.createElementNS(ns, 'circle');
+    center.setAttribute('cx', cx); center.setAttribute('cy', cy); center.setAttribute('r', '2.5');
+    center.setAttribute('fill', 'var(--accent-2)');
+    spiralSvgEl.appendChild(center);
+
+    const terms = fibSeq(n).map(Number);
+    const labelCount = Math.min(6, terms.length);
+    for(let i = terms.length - labelCount; i < terms.length; i++){
+      if(i < 0) continue;
+      const theta = thetaMax * i / (terms.length - 1);
+      const r = scale * Math.exp(b*theta);
+      const x = cx + r*Math.cos(theta);
+      const y = cy + r*Math.sin(theta);
+      const dot = document.createElementNS(ns, 'circle');
+      dot.setAttribute('cx', x); dot.setAttribute('cy', y); dot.setAttribute('r', '2.2');
+      dot.setAttribute('fill', 'var(--accent-2)');
+      spiralSvgEl.appendChild(dot);
+      const label = document.createElementNS(ns, 'text');
+      label.setAttribute('x', x + 6); label.setAttribute('y', y - 6);
+      label.setAttribute('font-size', '9');
+      label.setAttribute('fill', 'var(--ink-dim)');
+      label.setAttribute('font-family', 'JetBrains Mono, monospace');
+      label.textContent = terms[i] > 999999 ? terms[i].toExponential(2) : String(terms[i]);
+      spiralSvgEl.appendChild(label);
+    }
+
+    const seq = fibSeq(n);
+    seqReadoutEl.textContent = 'F(0..' + (n-1) + '): ' + seq.map(function(v){ return v.toString(); }).join(', ');
+    if(seq.length >= 2){
+      const a = Number(seq[seq.length-2]), c = Number(seq[seq.length-1]);
+      const ratio = a === 0 ? 0 : c/a;
+      ratioReadoutEl.textContent = 'F(' + (n-1) + ')/F(' + (n-2) + ') = ' + ratio.toFixed(10) + '   φ = 1.6180339887';
+    }
+  }
+
+  function drawBootSpiral(){
+    const ns = 'http://www.w3.org/2000/svg';
+    while(bootSpiralEl.firstChild) bootSpiralEl.removeChild(bootSpiralEl.firstChild);
+    const { d } = buildSpiralPath(10, 200, 200);
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'var(--accent)');
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('stroke-linecap', 'round');
+    bootSpiralEl.appendChild(path);
+    requestAnimationFrame(function(){
+      try{
+        const len = path.getTotalLength();
+        path.style.strokeDasharray = String(len);
+        path.style.strokeDashoffset = String(len);
+        void path.getBoundingClientRect();
+        path.style.transition = 'stroke-dashoffset ' + (reducedMotion ? 0.1 : 2.6) + 's ease-out';
+        requestAnimationFrame(function(){ path.style.strokeDashoffset = '0'; });
+      }catch(e){}
+    });
+  }
+
+  /* ============ boot sequence ============ */
+  let skipBoot = false;
+  let pendingResolves = [];
+  function bootSleep(ms){
+    ms = reducedMotion ? Math.min(ms, 15) : ms;
+    return new Promise(function(resolve){
+      if(skipBoot){ resolve(); return; }
+      const wrapped = function(){ resolve(); };
+      const id = setTimeout(function(){
+        pendingResolves = pendingResolves.filter(function(r){ return r !== wrapped; });
+        resolve();
+      }, ms);
+      wrapped.cancel = function(){ clearTimeout(id); };
+      pendingResolves.push(wrapped);
+    });
+  }
+  function doSkipBoot(){
+    if(skipBoot) return;
+    skipBoot = true;
+    pendingResolves.forEach(function(r){ if(r.cancel) r.cancel(); r(); });
+    pendingResolves = [];
+  }
+  function appendBootLine(text){
+    const div = document.createElement('div');
+    div.textContent = text;
+    bootLogEl.appendChild(div);
+    bootLogEl.scrollTop = bootLogEl.scrollHeight;
+  }
+
+  async function runBoot(){
+    skipBoot = false;
+    pendingResolves = [];
+    bootLogEl.innerHTML = '';
+    bootBarFill.style.width = '0%';
+    drawBootSpiral();
+
+    const steps = [
+      [0, 'cold-starting kernel'],
+      [1, 'seeding registers: 0, 1'],
+      [1, 'verifying seed pair'],
+      [2, 'initializing golden ratio module'],
+      [3, 'mounting /spiral'],
+      [5, 'loading shell: fibsh'],
+      [8, 'calibrating terminal'],
+      [13, 'indexing filesystem'],
+      [21, 'warming spiral renderer'],
+      [34, 'linking reverse-fibonacci unit'],
+      [55, 'running final checks'],
+      [89, 'almost there'],
+      [100, 'ready']
+    ];
+    for(const [pct, msg] of steps){
+      appendBootLine('[ ' + String(pct).padStart(3, ' ') + '%] ' + msg);
+      bootBarFill.style.width = pct + '%';
+      await bootSleep(95);
+    }
+    await bootSleep(180);
+    appendBootLine('— finalizing —');
+    const countdown = fibSeq(8).map(Number).reverse();
+    for(const t of countdown){
+      appendBootLine('T-minus ' + t);
+      await bootSleep(150);
+    }
+    appendBootLine('ignition.');
+    await bootSleep(220);
+    finishBoot();
+  }
+
+  function finishBoot(){
+    history = [];
+    historyPos = 0;
+    maxComputed = 10;
+    bootTimeMs = Date.now();
+    bootScreen.classList.add('hidden');
+    osRoot.classList.remove('hidden');
+    outputEl.innerHTML = '';
+    printBannerBlock();
+    printLine("type 'help' to see what's possible.", 'line-dim');
+    printLine('try: table 10', 'line-dim');
+    renderSpiral(10);
+    cmdInput.disabled = false;
+    cmdInput.focus();
+  }
+
+  function restartOS(){
+    const overlay = document.querySelector('.halt-overlay');
+    if(overlay) overlay.remove();
+    osRoot.classList.add('hidden');
+    bootScreen.classList.remove('hidden');
+    runBoot();
+  }
+
+  bootScreen.addEventListener('keydown', doSkipBoot);
+  bootScreen.addEventListener('click', doSkipBoot);
+  document.addEventListener('keydown', function(e){
+    if(!bootScreen.classList.contains('hidden')) doSkipBoot();
+  }, { once:false });
+
+  /* ============ generic wait ============ */
+  function wait(ms){ return new Promise(function(res){ setTimeout(res, reducedMotion ? Math.min(ms,15) : ms); }); }
+
+  /* ============ help text ============ */
+  const helpGroups = [
+    ['Sequences', [
+      ['fib [n]', 'print the first n Fibonacci numbers (default 10)'],
+      ['rfib [n]', 'print the first n numbers in reverse order'],
+      ['table [n]', 'show ascending and descending side by side'],
+      ['sum [n]', 'sum of the first n Fibonacci numbers'],
+      ['isfib <num>', 'check whether a number is a Fibonacci number'],
+      ['index <num>', 'find the position of a Fibonacci number'],
+      ['phi', 'the golden ratio and how the sequence converges to it'],
+      ['spiral [n]', 'redraw the sequence monitor with n terms']
+    ]],
+    ['System', [
+      ['neofetch', 'a system information card'],
+      ['whoami', 'who is running this terminal'],
+      ['date', 'the current date and time'],
+      ['uptime', 'how long fibOS has been running'],
+      ['history', 'list previously run commands'],
+      ['banner', 'reprint the fibOS banner'],
+      ['about', 'what this terminal is and why it exists'],
+      ['man <cmd>', 'a longer manual entry for a command']
+    ]],
+    ['Files', [
+      ['ls', 'list files in the current directory'],
+      ['cat <file>', 'print the contents of a file']
+    ]],
+    ['Look & feel', [
+      ['theme [name]', 'switch colours: amber, moss, rust, dusk, dawn']
+    ]],
+    ['Just because', [
+      ['calc <expr>', 'a small calculator, e.g. calc 21*1.618'],
+      ['rand', 'a random Fibonacci fact'],
+      ['rain', 'let it fibonacci-rain for a few seconds']
+    ]],
+    ['Power', [
+      ['clear', 'clear the screen'],
+      ['reboot', 'restart fibOS from the seed'],
+      ['shutdown', 'power down (click to restart)']
+    ]]
+  ];
+  const helpLookup = {};
+  helpGroups.forEach(function(group){
+    group[1].forEach(function(item){
+      const key = item[0].split(' ')[0];
+      helpLookup[key] = item[1];
+    });
+  });
+  helpLookup.golden = helpLookup.phi;
+  helpLookup.fibofetch = helpLookup.neofetch;
+  helpLookup.matrix = helpLookup.rain;
+  helpLookup.cls = helpLookup.clear;
+  helpLookup.echo = 'print text back to the terminal';
+  helpLookup.exit = 'close the session (this is a browser tab, so it just shuts fibOS down)';
+
+  /* ============ commands ============ */
+  function cmdHelp(){
+    let out = '';
+    helpGroups.forEach(function(group){
+      out += '\n' + group[0].toUpperCase() + '\n';
+      group[1].forEach(function(item){
+        out += '  ' + item[0].padEnd(16) + item[1] + '\n';
+      });
+    });
+    printPre(out.trim());
+    printLine("tip: try 'table 10' or 'theme dusk'", 'line-dim');
+  }
+
+  function parseN(args, def){
+    if(args.length === 0) return def;
+    const n = parseInt(args[0], 10);
+    return isNaN(n) ? def : n;
+  }
+
+  function cmdFib(args){
+    let n = parseN(args, 10);
+    if(n < 0){ printLine('fib: n must be zero or positive', 'line-err'); return; }
+    if(n > 500){ printLine('fib: capped at 500 terms to keep this readable', 'line-dim'); n = 500; }
+    maxComputed = Math.max(maxComputed, n);
+    if(n === 0){ printLine('(no terms requested)', 'line-dim'); }
+    else printPre(fibSeq(n).map(function(v){ return v.toLocaleString('en-US'); }).join('  '));
+    renderSpiral(Math.min(Math.max(n,2), 20));
+  }
+
+  function cmdRfib(args){
+    let n = parseN(args, 10);
+    if(n < 0){ printLine('rfib: n must be zero or positive', 'line-err'); return; }
+    if(n > 500){ printLine('rfib: capped at 500 terms', 'line-dim'); n = 500; }
+    maxComputed = Math.max(maxComputed, n);
+    if(n === 0){ printLine('(no terms requested)', 'line-dim'); }
+    else printPre(reverseFibSeq(n).map(function(v){ return v.toLocaleString('en-US'); }).join('  '));
+    renderSpiral(Math.min(Math.max(n,2), 20));
+  }
+
+  function cmdTable(args){
+    let n = parseN(args, 10);
+    n = Math.max(1, Math.min(n, 200));
+    const asc = fibSeq(n).map(function(v){ return v.toString(); });
+    const desc = reverseFibSeq(n).map(function(v){ return v.toString(); });
+    const w1 = Math.max(9, asc.reduce(function(m,s){ return Math.max(m,s.length); }, 0));
+    const w2 = Math.max(10, desc.reduce(function(m,s){ return Math.max(m,s.length); }, 0));
+    let out = 'i'.padEnd(4) + 'ascending'.padEnd(w1+2) + 'descending'.padEnd(w2+2) + '\n';
+    out += '-'.repeat(4 + w1+2 + w2+2) + '\n';
+    for(let i=0;i<n;i++){
+      out += String(i).padEnd(4) + asc[i].padEnd(w1+2) + desc[i].padEnd(w2+2) + '\n';
+    }
+    printPre(out.replace(/\n+$/,''));
+    maxComputed = Math.max(maxComputed, n);
+    renderSpiral(Math.min(Math.max(n,2), 20));
+  }
+
+  function cmdSum(args){
+    let n = parseN(args, 10);
+    n = Math.max(0, Math.min(n, 500));
+    const total = fibSeq(n).reduce(function(a,v){ return a+v; }, 0n);
+    printLine('sum of the first ' + n + ' terms: ' + total.toLocaleString('en-US'), 'line-accent');
+  }
+
+  function cmdIsFib(args){
+    if(args.length === 0){ printLine('usage: isfib <number>', 'line-dim'); return; }
+    try{
+      const num = BigInt(args[0]);
+      if(num < 0n){ printLine('isfib: please provide a non-negative whole number', 'line-err'); return; }
+      const res = isFibonacci(num);
+      printLine(num.toString() + (res ? ' is a Fibonacci number.' : ' is not a Fibonacci number.'), res ? 'line-ok' : 'line-dim');
+      if(res){ printLine('(it is F(' + fibIndex(num) + '))', 'line-dim'); }
+    }catch(e){ printLine('isfib: please provide a whole number', 'line-err'); }
+  }
+
+  function cmdIndex(args){
+    if(args.length === 0){ printLine('usage: index <number>', 'line-dim'); return; }
+    try{
+      const num = BigInt(args[0]);
+      if(num < 0n){ printLine('index: please provide a non-negative whole number', 'line-err'); return; }
+      const idx = fibIndex(num);
+      if(idx === -1) printLine(num.toString() + ' is not a Fibonacci number, so it has no index.', 'line-dim');
+      else printLine('F(' + idx + ') = ' + num.toString(), 'line-ok');
+    }catch(e){ printLine('index: please provide a whole number', 'line-err'); }
+  }
+
+  function cmdPhi(){
+    printLine('the golden ratio, φ = (1 + √5) / 2 = 1.6180339887498948…', 'line-accent');
+    printLine('each step divides into the next a little closer to φ:', 'line-dim');
+    const seq = fibSeq(13).map(Number);
+    let out = '';
+    for(let i=2;i<seq.length;i++){
+      const ratio = seq[i] / seq[i-1];
+      out += 'F(' + i + ')/F(' + (i-1) + ') = ' + seq[i] + '/' + seq[i-1] + ' = ' + ratio.toFixed(8) + '\n';
+    }
+    printPre(out.replace(/\n+$/,''));
+  }
+
+  function cmdSpiral(args){
+    let n = parseN(args, Math.min(maxComputed, 20));
+    n = Math.max(2, Math.min(n, 20));
+    renderSpiral(n);
+    printLine('sequence monitor redrawn with ' + n + ' terms.', 'line-dim');
+  }
+
+  function formatUptime(){
+    const sec = Math.floor((Date.now() - bootTimeMs) / 1000);
+    const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+    return [h,m,s].map(function(v){ return String(v).padStart(2,'0'); }).join(':');
+  }
+
+  function cmdNeofetch(){
+    const rows = [
+      ['OS', 'fibOS v1.61803'],
+      ['Kernel', 'golden-ratio 1.6180339887'],
+      ['Shell', 'fibsh'],
+      ['Theme', currentTheme],
+      ['Uptime', formatUptime()],
+      ['Sequence depth', String(maxComputed)],
+      ['Resolution', window.innerWidth + 'x' + window.innerHeight]
+    ];
+    const w = Math.max.apply(null, rows.map(function(r){ return r[0].length; }));
+    printPre(rows.map(function(r){ return r[0].padEnd(w+2) + r[1]; }).join('\n'));
+  }
+
+  function cmdWhoami(){ printLine('guest@fibOS — exploring sequences since ' + new Date(bootTimeMs).toLocaleTimeString(), 'line-dim'); }
+  function cmdDate(){ printLine(new Date().toLocaleString(), 'line-dim'); }
+  function cmdUptime(){ printLine('up ' + formatUptime(), 'line-dim'); }
+  function cmdHistoryCmd(){
+    if(history.length === 0){ printLine('no history yet.', 'line-dim'); return; }
+    printPre(history.map(function(h,i){ return String(i+1).padStart(3,' ') + '  ' + h; }).join('\n'));
+  }
+  function cmdBanner(){ printBannerBlock(); }
+  function cmdAbout(){
+    printPre('fibOS is a small terminal built around one idea: a sequence where\n' +
+      'each number is the sum of the two before it, and what happens when\n' +
+      'you run that sequence forward and backward at once.\n\n' +
+      'The panel on the right is a logarithmic spiral grown at the same\n' +
+      'rate the sequence grows toward the golden ratio. Type "table 10" to\n' +
+      'see both directions side by side, or "phi" to watch the convergence.');
+  }
+  function cmdMan(args){
+    if(args.length === 0){ printLine('usage: man <command>', 'line-dim'); return; }
+    const name = args[0].toLowerCase();
+    const entry = helpLookup[name];
+    if(!entry){ printLine('no manual entry for ' + name, 'line-err'); return; }
+    printPre(name + '\n\n  ' + entry);
+  }
+  function cmdLs(){ printPre(Object.keys(files).join('\n')); }
+  function cmdCat(args){
+    if(args.length === 0){ printLine('usage: cat <file>', 'line-dim'); return; }
+    const name = args[0];
+    if(!(name in files)){ printLine('cat: ' + name + ': no such file', 'line-err'); return; }
+    printPre(files[name]);
+  }
+  function cmdTheme(args){
+    const themes = ['amber','moss','rust','dusk','dawn'];
+    const name = args[0];
+    if(!name){
+      printLine('current theme: ' + currentTheme, 'line-dim');
+      printLine('available: ' + themes.join(', '), 'line-dim');
+      return;
+    }
+    if(themes.indexOf(name) === -1){
+      printLine("theme: unknown theme '" + name + "'. try one of: " + themes.join(', '), 'line-err');
+      return;
+    }
+    currentTheme = name;
+    if(name === 'amber') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', name);
+    themeIndicatorEl.textContent = 'theme: ' + name;
+    printLine('switched to ' + name + '.', 'line-ok');
+  }
+  function cmdCalc(args){
+    const expr = args.join(' ');
+    if(!expr){ printLine('usage: calc <expression>, e.g. calc 21*1.618', 'line-dim'); return; }
+    if(!/^[-+*/().\d\s^]+$/.test(expr)){
+      printLine('calc: only numbers and + - * / ^ ( ) are allowed', 'line-err');
+      return;
+    }
+    try{
+      const safeExpr = expr.replace(/\^/g, '**');
+      const val = Function('"use strict";return (' + safeExpr + ')')();
+      if(typeof val !== 'number' || !isFinite(val)){ printLine('calc: that did not resolve to a number', 'line-err'); return; }
+      printLine(expr + ' = ' + val, 'line-accent');
+    }catch(e){ printLine('calc: could not evaluate that expression', 'line-err'); }
+  }
+  function cmdRand(){ printLine(facts[Math.floor(Math.random()*facts.length)], 'line-accent'); }
+  function cmdEcho(args){ printLine(args.join(' ')); }
+  function cmdClear(){ outputEl.innerHTML = ''; }
+
+  async function cmdRain(){
+    if(reducedMotion){ printLine('rain skipped — reduced motion is on.', 'line-dim'); return; }
+    printLine('letting it fibonacci-rain for a few seconds… press any key to stop early.', 'line-dim');
+    const overlay = document.createElement('div');
+    overlay.className = 'rain-overlay';
+    const vals = [0,1,2,3,5,8,13,21,34,55,89];
+    for(let i=0;i<40;i++){
+      const span = document.createElement('span');
+      span.textContent = vals[Math.floor(Math.random()*vals.length)];
+      span.style.left = (Math.random()*100) + '%';
+      span.style.animationDuration = (4 + Math.random()*3) + 's';
+      span.style.animationDelay = (Math.random()*1.5) + 's';
+      span.style.opacity = (0.35 + Math.random()*0.5).toFixed(2);
+      span.style.fontSize = (11 + Math.random()*10) + 'px';
+      overlay.appendChild(span);
+    }
+    document.body.appendChild(overlay);
+    let stopped = false;
+    function stop(){
+      if(stopped) return;
+      stopped = true;
+      overlay.remove();
+      document.removeEventListener('keydown', stopOnKey);
+    }
+    function stopOnKey(){ stop(); }
+    document.addEventListener('keydown', stopOnKey);
+    await wait(6000);
+    stop();
+  }
+
+  async function cmdShutdown(){
+    printLine('initiating shutdown — counting down from the top of the sequence.', 'line-dim');
+    cmdInput.disabled = true;
+    const countdown = fibSeq(8).map(Number).reverse();
+    for(const t of countdown){
+      printLine('T-minus ' + t, 'line-accent');
+      await wait(170);
+    }
+    printLine('system halted.', 'line-err');
+    const ov = document.createElement('div');
+    ov.className = 'halt-overlay';
+    const p1 = document.createElement('p'); p1.textContent = 'system halted';
+    const p2 = document.createElement('p'); p2.className = 'halt-sub'; p2.textContent = 'click anywhere to restart';
+    ov.appendChild(p1); ov.appendChild(p2);
+    ov.addEventListener('click', restartOS);
+    osRoot.appendChild(ov);
+  }
+
+  async function cmdReboot(){
+    printLine('rebooting — descending the sequence, then climbing it again.', 'line-dim');
+    cmdInput.disabled = true;
+    const countdown = fibSeq(8).map(Number).reverse();
+    for(const t of countdown){
+      printLine('T-minus ' + t, 'line-accent');
+      await wait(150);
+    }
+    printLine('— restarting —', 'line-dim');
+    await wait(300);
+    restartOS();
+  }
+
+  async function cmdExit(args){
+    printLine("fibOS lives in this browser tab, so there's no real exit — here's the next best thing.", 'line-dim');
+    await cmdShutdown(args);
+  }
+
+  const commands = {
+    help: cmdHelp,
+    fib: cmdFib,
+    rfib: cmdRfib,
+    table: cmdTable,
+    sum: cmdSum,
+    isfib: cmdIsFib,
+    index: cmdIndex,
+    phi: cmdPhi,
+    golden: cmdPhi,
+    spiral: cmdSpiral,
+    neofetch: cmdNeofetch,
+    fibofetch: cmdNeofetch,
+    whoami: cmdWhoami,
+    date: cmdDate,
+    uptime: cmdUptime,
+    history: cmdHistoryCmd,
+    banner: cmdBanner,
+    about: cmdAbout,
+    man: cmdMan,
+    ls: cmdLs,
+    cat: cmdCat,
+    theme: cmdTheme,
+    calc: cmdCalc,
+    rand: cmdRand,
+    rain: cmdRain,
+    matrix: cmdRain,
+    echo: cmdEcho,
+    clear: cmdClear,
+    cls: cmdClear,
+    reboot: cmdReboot,
+    shutdown: cmdShutdown,
+    exit: cmdExit
+  };
+
+  /* ============ input handling ============ */
+  async function handleSubmit(){
+    const raw = cmdInput.value;
+    cmdInput.value = '';
+    printCommandEcho(raw);
+    const trimmed = raw.trim();
+    if(!trimmed) return;
+    if(trimmed.toLowerCase() !== (history[history.length-1] || '').toLowerCase()) history.push(trimmed);
+    historyPos = history.length;
+    const parts = trimmed.split(/\s+/).filter(function(p){ return !p.startsWith('-'); });
+    if(parts.length === 0) return;
+    const cmd = parts[0].toLowerCase();
+    const args = parts.slice(1);
+    const fn = commands[cmd];
+    if(!fn){
+      printLine("command not found: " + cmd + " — type 'help' to see available commands.", 'line-err');
+      return;
+    }
+    try{
+      const res = fn(args);
+      if(res instanceof Promise) await res;
+    }catch(e){
+      printLine('something went wrong running that command.', 'line-err');
+      console.error(e);
+    }
+  }
+
+  function autocomplete(){
+    const val = cmdInput.value.trim().toLowerCase();
+    if(!val) return;
+    const matches = Object.keys(commands).filter(function(c){ return c.indexOf(val) === 0; });
+    const unique = Array.from(new Set(matches));
+    if(unique.length === 1){ cmdInput.value = unique[0] + ' '; }
+    else if(unique.length > 1){ printLine(unique.join('   '), 'line-dim'); }
+  }
+
+  cmdInput.addEventListener('keydown', function(e){
+    if(e.key === 'Enter'){ e.preventDefault(); handleSubmit(); }
+    else if(e.key === 'ArrowUp'){
+      e.preventDefault();
+      if(historyPos > 0){ historyPos--; cmdInput.value = history[historyPos] || ''; }
+    }
+    else if(e.key === 'ArrowDown'){
+      e.preventDefault();
+      if(historyPos < history.length){ historyPos++; cmdInput.value = history[historyPos] || ''; }
+    }
+    else if(e.key === 'Tab'){ e.preventDefault(); autocomplete(); }
+  });
+
+  document.addEventListener('keydown', function(e){
+    if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l'){
+      if(!osRoot.classList.contains('hidden') && !cmdInput.disabled){
+        e.preventDefault();
+        cmdClear();
+      }
+    }
+  });
+
+  terminalPaneEl.addEventListener('click', function(){
+    if(!cmdInput.disabled) cmdInput.focus();
+  });
+
+  /* ============ clock ============ */
+  function updateClock(){ clockEl.textContent = new Date().toLocaleTimeString(); }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  /* ============ go ============ */
+  runBoot();
+})();
+</script>
+</body>
+</html>
